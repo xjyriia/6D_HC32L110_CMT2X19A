@@ -1,0 +1,362 @@
+#include "user_low_power.h"
+#include "user_lpt.h"
+#include "user_motor.h"
+#include "board.h"
+#include "lpm.h"
+#include "lpt.h"
+#include "gpio.h"
+#include "clk.h"
+#include "pca.h"
+#include "ddl.h"
+
+// 低功耗配置参数
+#define LOW_POWER_TIMEOUT_10S   10000u      // 10 秒超时 (毫秒)
+#define LPTIMER_CLOCK_HZ        32768u      // LPTimer 使用 32.768kHz 时钟
+
+// 状态变量
+static uint8_t u8LowPowerEnabled = 0;
+static uint32_t u32TimeoutMs = 0;
+static uint32_t u32CurrentCountMs = 0;
+static func_ptr_t pfnTimeoutCallback = NULL;
+
+/**
+ * @brief  LPTimer 中断回调
+ * @param  None
+ * @retval None
+ */
+static void Lptimer_IrqCallback(void)
+{
+    if (Lpt_GetIntFlag()) {
+        Lpt_ClearIntFlag();
+        
+        u32CurrentCountMs += 100;  // 假设每 100ms 触发一次
+        
+        // 检查是否超时
+        if (u32CurrentCountMs >= u32TimeoutMs) {
+            if (pfnTimeoutCallback != NULL) {
+                pfnTimeoutCallback();
+            }
+            // 停止 LPTimer
+            Lpt_Stop();
+            u8LowPowerEnabled = 0;
+        }
+    }
+}
+
+/**
+ * @brief  低功耗定时器初始化
+ * @param  timeout_ms: 超时时间 (毫秒)
+ * @retval None
+ */
+static void LowPower_Timer_Init(uint32_t timeout_ms)
+{
+    stc_lpt_config_t stcLptConfig;
+    uint16_t u16ReloadValue;
+    
+    DDL_ZERO_STRUCT(stcLptConfig);
+    
+    // 使能 LPTimer 时钟
+    Clk_SetPeripheralGate(ClkPeripheralLpTim, TRUE);
+    
+    // 配置 LPTimer
+    stcLptConfig.enCT = LptTimer;           // 定时器模式
+    stcLptConfig.enMD = LptMode2;           // 自动重装载 16 位模式
+    stcLptConfig.enTckSel = LptXIL32K;      // 外部 32.768kHz 时钟源
+    stcLptConfig.enGate = LptGateDisable;   // 不使用门控
+    stcLptConfig.enGateP = LptOpposite;     // 门控低电平有效（未使用）
+    stcLptConfig.enTog = LptTogDisable;     // 禁止翻转
+    stcLptConfig.pfnLpTimCb = Lptimer_IrqCallback;
+    
+    Lpt_Init(&stcLptConfig);
+    
+    // 计算重载值：32768Hz / 10 = 3277 (约 100ms 中断一次)
+    u16ReloadValue = LPTIMER_CLOCK_HZ / 10;
+    Lpt_ARRSet(u16ReloadValue);
+    
+    // 使能中断
+    Lpt_EnableIrq();
+    EnableNvic(LPTIM_IRQn, DDL_IRQ_LEVEL_DEFAULT, TRUE);
+    
+    u32TimeoutMs = timeout_ms;
+    u32CurrentCountMs = 0;
+}
+
+/**
+ * @brief  深度睡眠 GPIO 低功耗配置 (所有板型通用)
+ *
+ * 核心原则: 除唤醒引脚外, 全部IO设为模拟模式(ADS=1)
+ * 模拟模式关闭数字输入缓冲器, 消除浮空引脚漏电, 这是降到 0.5uA 的关键
+ *
+ * HC32L110 TSSOP20 实际引脚:
+ *   P00(SWCLK) P01(SWDIO) P02 P03
+ *   P14 P15
+ *   P23 P24 P25 P26 P27
+ *   P31 P32 P33 P34 P35 P36
+ */
+static void LowPower_GpioConfig(void)
+{
+    /* ===== Port 0 ===== */
+    /* P00(SWCLK) P01(SWDIO): 保持默认, 不设模拟 (调试需要) */
+    Gpio_SetAnalog(0u, 2u, TRUE);   /* P02: 模拟模式 */
+    /* P03: 唤醒引脚, 在调用处单独配置中断, 此处不处理 */
+
+    /* ===== Port 1 ===== */
+    Gpio_SetAnalog(1u, 4u, TRUE);   /* P14: 模拟模式 (TWI_SDA在使用时才配GPIO) */
+    Gpio_SetAnalog(1u, 5u, TRUE);   /* P15: 模拟模式 (TWI_SCK在使用时才配GPIO) */
+
+    /* ===== Port 2 ===== */
+    Gpio_SetAnalog(2u, 3u, TRUE);   /* P23: 模拟模式 (RX板振动马达引脚, 睡眠时关) */
+    Gpio_SetAnalog(2u, 4u, TRUE);   /* P24: 模拟模式 (6D板MOTOR_A, 睡眠时关) */
+    Gpio_SetAnalog(2u, 5u, TRUE);   /* P25: 模拟模式 (6D板MOTOR_B, 睡眠时关) */
+    Gpio_SetAnalog(2u, 6u, TRUE);   /* P26: 模拟模式 */
+    Gpio_SetAnalog(2u, 7u, TRUE);   /* P27: 模拟模式 */
+
+    /* ===== Port 3 ===== */
+    Gpio_SetAnalog(3u, 1u, TRUE);   /* P31: 模拟模式 */
+    /* P32: CMT_GPO1 唤醒引脚, 在调用处单独配置 */
+    Gpio_SetAnalog(3u, 3u, TRUE);   /* P33: 模拟模式 (SPI_FCSB) */
+    Gpio_SetAnalog(3u, 4u, TRUE);   /* P34: 模拟模式 (SPI_SCLK / G_SCL) */
+    Gpio_SetAnalog(3u, 5u, TRUE);   /* P35: 模拟模式 (SPI_SDIO / G_INT) */
+    Gpio_SetAnalog(3u, 6u, TRUE);   /* P36: 模拟模式 (SPI_CSB) */
+}
+
+/**
+ * @brief  低功耗管理初始化
+ * @param  None
+ * @retval None
+ */
+void user_low_power_init(void)
+{
+    u8LowPowerEnabled = 0;
+    u32TimeoutMs = 0;
+    u32CurrentCountMs = 0;
+    pfnTimeoutCallback = NULL;
+}
+
+/**
+ * @brief  启动低功耗定时器
+ * @param  timeout_ms: 超时时间 (毫秒)
+ * @param  callback: 超时回调函数
+ * @retval None
+ */
+void user_low_power_start_timer(uint32_t timeout_ms, func_ptr_t callback)
+{
+    pfnTimeoutCallback = callback;
+    u32TimeoutMs = timeout_ms;
+    u32CurrentCountMs = 0;
+    u8LowPowerEnabled = 1;
+    
+    LowPower_Timer_Init(timeout_ms);
+    Lpt_Run();
+}
+
+/**
+ * @brief  停止低功耗定时器
+ * @param  None
+ * @retval None
+ */
+void user_low_power_stop_timer(void)
+{
+    Lpt_Stop();
+    Lpt_DisableIrq();
+    u8LowPowerEnabled = 0;
+}
+
+/**
+ * @brief  进入睡眠模式
+ * @param  None
+ * @retval None
+ */
+void user_enter_sleep_mode(void)
+{
+    stc_lpm_config_t stcLpmConfig;
+    
+    // RX 板需要 LPT 定时器继续运行以支持振动 tick 和占空比接收轮询
+#if defined(BOARD_TYPE_RX)
+    // 确保 LPT 定时器正在运行 (80ms，平衡功耗和响应速度)
+    static uint8_t s_u8LptInit = 0;
+    if (!s_u8LptInit) {
+        LowPower_Timer_Init(80000);  // 80ms (从 50ms 延长到 80ms)
+        s_u8LptInit = 1;
+    }
+    Lpt_Run();
+#endif
+    
+    // 配置低功耗模式
+    stcLpmConfig.enSEVONPEND = FALSE;  // 唤醒事件
+    stcLpmConfig.enSLEEPDEEP = FALSE;  // 睡眠模式 (非深度睡眠)
+    stcLpmConfig.enSLEEPONEXIT = FALSE;
+    
+    Lpm_Config(&stcLpmConfig);
+    
+    // 进入低功耗模式
+    Lpm_GotoLpmMode();
+}
+
+/**
+ * @brief  进入深度睡眠模式 (目标功耗 0.5uA)
+ *
+ * 优化要点:
+ *   1. 除唤醒引脚外所有IO设为模拟模式 (Gpio_SetAnalog)
+ *      Gpio_InitIOExt(input, 无上下拉) 仍有数字输入缓冲器漏电 — 核心区别!
+ *   2. 关闭 SysTick — Cortex-M0+ SysTick 在深度睡眠也耗电
+ *   3. 一键关所有外设时钟 (M0P_CLOCK->PERI_CLKEN = 0)
+ *   4. 唤醒后再逐一恢复所需外设
+ */
+void user_enter_deep_sleep_mode(void)
+{
+    stc_lpm_config_t stcLpmConfig;
+
+    /* ===== 板级唤醒源配置 (必须在 GPIO 全部模拟化之前完成) ===== */
+#if defined(BOARD_TYPE_RX)
+    // RX 板：启动 LPT 定时器 (50ms 唤醒一次)
+    static uint8_t s_u8LptInit = 0;
+    if (!s_u8LptInit) {
+        LowPower_Timer_Init(50000);  // 50ms
+        s_u8LptInit = 1;
+    }
+    Lpt_Run();
+#elif defined(BOARD_TYPE_6D)
+    // 6D 板：停止电机 PWM，并重新使能 LIS2DH(GPIO) 中断唤醒
+    Motor_Stop();
+    Motor_Sleep();
+    // 重新使能 LIS2DH 中断 (P0.3 上升沿唤醒)
+    Gpio_InitIOExt(G_INT_PORT, G_INT_PIN, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_ClearIrq(G_INT_PORT, G_INT_PIN);
+    Gpio_EnableIrq(G_INT_PORT, G_INT_PIN, GpioIrqRising);
+    EnableNvic(G_INT_IRQ, DDL_IRQ_LEVEL_DEFAULT, TRUE);
+#else
+    // TX 板：LPT 反初始化，完全关闭以降低功耗
+    //LptTimer_DeInit();
+#endif
+    
+    // 1. 停止 PCA 看门狗
+    Pca_Stop();
+    
+    // 2. 关闭所有外设时钟（保留 GPIO）
+    Clk_SetPeripheralGate(ClkPeripheralUart0, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralUart1, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralLpUart, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralI2c, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralSpi, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralBt, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralLpTim, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralAdt, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralPca, FALSE);     // 关闭看门狗时钟
+		
+    Clk_SetPeripheralGate(ClkPeripheralWdt, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralAdcBgr, FALSE);  // 关闭 ADC/BGR
+    Clk_SetPeripheralGate(ClkPeripheralVcLvd, FALSE);   // 关闭 LVD
+		
+    Clk_SetPeripheralGate(ClkPeripheralRtc, FALSE);
+		
+    Clk_SetPeripheralGate(ClkPeripheralClkTrim, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralTick, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralCrc, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralGpio, TRUE);
+    Clk_SetPeripheralGate(ClkPeripheralFlash, FALSE);
+		
+    // 保留：GPIO
+    
+    // 3. 配置 IO 为低功耗状态
+#if defined(BOARD_TYPE_TX)
+    // TX 板：P0.3 按键输入上拉，重新使能中断
+    Gpio_InitIOExt(0, 0, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(0, 1, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(0, 2, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(0, 3, GpioDirIn, TRUE, FALSE, FALSE, FALSE);
+    Gpio_ClearIrq(0, 3);
+    Gpio_EnableIrq(0, 3, GpioIrqFalling);
+#elif defined(BOARD_TYPE_RX)
+    // RX 板：P3.2(CMT_GPO1) 输入上拉，重新使能中断
+    Gpio_InitIOExt(3, 2, GpioDirIn, TRUE, FALSE, FALSE, FALSE);
+    Gpio_ClearIrq(3, 2);
+    Gpio_EnableIrq(3, 2, GpioIrqFalling);
+#elif defined(BOARD_TYPE_6D)
+    // 6D 板：P0.3(LIS2DH INT1) 上拉+下降沿中断唤醒
+    Gpio_InitIOExt(0, 3, GpioDirIn, TRUE, FALSE, FALSE, FALSE);  // 输入上拉
+    Gpio_ClearIrq(0, 3);
+    Gpio_EnableIrq(0, 3, GpioIrqFalling);  // 下降沿触发
+#endif
+    
+    // P1: 全部输入无上下拉
+    Gpio_InitIOExt(1, 0, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(1, 1, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(1, 2, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(1, 3, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(1, 4, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(1, 5, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    
+    // P2: 全部输入无上下拉
+    Gpio_InitIOExt(2, 0, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(2, 1, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(2, 2, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(2, 3, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+#if defined(BOARD_TYPE_6D) && defined(BOARD_NEED_MOTOR)
+    // 6D板电机控制引脚: 保持输出低电平，确保电机停止
+    Gpio_InitIOExt(2, 4, GpioDirOut, FALSE, FALSE, FALSE, FALSE);
+    Gpio_SetIO(2, 4, 0);
+    Gpio_InitIOExt(2, 5, GpioDirOut, FALSE, FALSE, FALSE, FALSE);
+    Gpio_SetIO(2, 5, 0);
+#else
+    Gpio_InitIOExt(2, 4, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(2, 5, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+#endif
+    Gpio_InitIOExt(2, 6, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(2, 7, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    
+    // P3: 除 P3.2 外其他输入无上下拉
+    Gpio_InitIOExt(3, 0, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(3, 1, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    // P3.2 已在上文配置
+    Gpio_InitIOExt(3, 3, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(3, 4, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    Gpio_InitIOExt(3, 5, GpioDirIn, FALSE, FALSE, FALSE, FALSE);
+    
+    // 4. 配置深度睡眠模式
+    stcLpmConfig.enSEVONPEND = FALSE;
+    stcLpmConfig.enSLEEPDEEP = TRUE;   // 深度睡眠
+    stcLpmConfig.enSLEEPONEXIT = FALSE;
+    
+    Lpm_Config(&stcLpmConfig);
+    
+    // 5. 进入深度睡眠 (GPIO中断可唤醒)
+    Lpm_GotoLpmMode();
+}
+
+/**
+ * @brief  系统进入最低功耗模式 (所有外设关闭)
+ * @param  None
+ * @retval None
+ */
+void user_system_enter_low_power_mode(void)
+{
+    // 停止所有外设时钟
+    Clk_SetPeripheralGate(ClkPeripheralUart0, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralUart1, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralSpi, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralI2c, FALSE);
+    // Clk_SetPeripheralGate(ClkPeripheralAdcBgr, FALSE);  // 不能关闭，影响 LVD
+    Clk_SetPeripheralGate(ClkPeripheralPca, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralBt, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralWdt, FALSE);
+    // Clk_SetPeripheralGate(ClkPeripheralVcLvd, FALSE);   // 不能关闭 LVD
+    Clk_SetPeripheralGate(ClkPeripheralRtc, FALSE);
+    Clk_SetPeripheralGate(ClkPeripheralCrc, FALSE);
+    
+    // GPIO 配置为低功耗
+    LowPower_GpioConfig();
+    
+    // 进入深度睡眠
+    user_enter_deep_sleep_mode();
+}
+
+/**
+ * @brief  获取低功耗定时器状态
+ * @param  None
+ * @retval 1: 运行中，0: 已停止
+ */
+uint8_t user_low_power_is_timer_running(void)
+{
+    return u8LowPowerEnabled;
+}

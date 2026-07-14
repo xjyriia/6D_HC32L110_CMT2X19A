@@ -1,0 +1,11 @@
+.\output\release\protocol.o: ..\source\protocol.c
+.\output\release\protocol.o: ..\config\user_common_config.h
+.\output\release\protocol.o: ..\config\board.h
+.\output\release\protocol.o: ..\source\log_printf.h
+.\output\release\protocol.o: ..\source\protocol.h
+.\output\release\protocol.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+.\output\release\protocol.o: ..\mcu\common\base_types.h
+.\output\release\protocol.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
+.\output\release\protocol.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+.\output\release\protocol.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stddef.h
+.\output\release\protocol.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\assert.h

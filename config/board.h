@@ -59,9 +59,9 @@
 // 接收板：P2.3 (单引脚振动马达)
 #if defined(BOARD_TYPE_6D)
 #define	MOTOR_A_PORT				    2
-#define	MOTOR_A_PIN				        4
+#define	MOTOR_A_PIN				      4
 #define	MOTOR_B_PORT				    2
-#define	MOTOR_B_PIN				        5
+#define	MOTOR_B_PIN				      5
 #elif defined(BOARD_TYPE_RX)
 #define	MOTOR_CTRL_PORT					2
 #define	MOTOR_CTRL_PIN					3

@@ -57,6 +57,7 @@ uint8_t LIS2DH_Init(void)
 		uint8_t ctrl3;
 		uint8_t int1_cfg;
     uint8_t dummy;
+		uint8_t ctrl_reg0 = 0;
     
     // 初始化I2C
     i2c_init();
@@ -67,6 +68,10 @@ uint8_t LIS2DH_Init(void)
     if (who_am_i != 0x33)
         return 1; // 设备不存在
 
+		// 读取 CTRL_REG0 的当前值，保留其他位的状态，仅将最高位（Bit 7）置 1
+		ctrl_reg0 = LIS2DH_ReadReg(LIS2DH_REG_CTRL_REG0); 
+		LIS2DH_WriteReg(LIS2DH_REG_CTRL_REG0, ctrl_reg0 | 0x80);			//最高位写1，断开SA0内部上拉电阻
+		
 		//6D 位置识别
     LIS2DH_WriteReg(LIS2DH_REG_CTRL_REG1, 0x2F);		//10HZ LPen Xen Yen Zen 分别置 1
     LIS2DH_WriteReg(LIS2DH_REG_CTRL_REG2, 0x00);		//

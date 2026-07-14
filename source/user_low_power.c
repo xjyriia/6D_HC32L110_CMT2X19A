@@ -79,6 +79,7 @@ static void LowPower_GpioConfig(void)
      *   P14 P15  P23 P24 P25 P26 P27
      *   P31 P32 P33 P34 P35 P36
      */
+    Gpio_SetAnalog(0u, 1u, TRUE);   /* P01 */
     Gpio_SetAnalog(0u, 2u, TRUE);   /* P02 */
     M0P_GPIO->P0PU_f.P02 = 0u; M0P_GPIO->P0PD_f.P02 = 0u;
 #if defined(BOARD_TYPE_TX)

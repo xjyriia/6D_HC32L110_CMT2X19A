@@ -11,6 +11,7 @@
 #define LIS2DH_REG_OUT_TEMP_L       0x0C
 #define LIS2DH_REG_OUT_TEMP_H       0x0D
 #define LIS2DH_REG_WHO_AM_I         0x0F
+#define LIS2DH_REG_CTRL_REG0        0x1E
 #define LIS2DH_REG_CTRL_REG1        0x20
 #define LIS2DH_REG_CTRL_REG2        0x21
 #define LIS2DH_REG_CTRL_REG3        0x22

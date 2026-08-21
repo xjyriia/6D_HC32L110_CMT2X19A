@@ -20,12 +20,14 @@ typedef enum{
 	PAIR 			= 0X5A,
 }cmd_t;
 
+#pragma pack(push, 1)
 typedef struct {
 	uint8_t len;
 	uint8_t cmd;
 	uint16_t pair_data;
 	uint8_t data;
 }rf_data_t;
+#pragma pack(pop)
 
 #define PAIR_ADDR			0x00007E00
 //-----------------------------------------------------------------------

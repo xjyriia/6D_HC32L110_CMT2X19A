@@ -18,13 +18,13 @@
 #include "bt.h"
 #include "user_flash.h"
 
-#define RF_PACKET_SIZE      16      // 有效数据长度 (不含前导码和同步字)
+#define RF_PACKET_SIZE      5      	// 有效数据长度 (不含前导码和同步字)
 
 // CMT2119A 发送数据包格式: 前导码 + 同步字 + 有效数据
 // CMT2219A 同步字配置: 0x2DD4 0x2DD4 -> 字节序: 0xD4 0x2D 0xD4 0x2D
 #define RF_PREAMBLE_SIZE    4       // 前导码长度
 #define RF_SYNC_SIZE        4       // 同步字长度
-#define RF_TOTAL_SIZE       (RF_PREAMBLE_SIZE + RF_SYNC_SIZE + 1 + RF_PACKET_SIZE)		//1为数据长度参数占用1个字节
+#define RF_TOTAL_SIZE       (RF_PREAMBLE_SIZE + RF_SYNC_SIZE + RF_PACKET_SIZE)		//1为数据长度参数占用1个字节
 
 //#include "uart.h"
 
@@ -58,7 +58,7 @@
 #endif
 
 // 接收数据缓冲区
-#define g_recevlength       16
+#define g_recevlength       0x05
 unsigned char g_recevingBuf[g_recevlength];
 
 // 6D 板状态机和变量前向声明 (供中断处理使用)
@@ -116,7 +116,7 @@ void Gpio_IRQHandler(uint8_t u8Param)
     Lpt_Run();
     
     // 重置 6D 状态机到 IDLE，允许再次发送
-		if(s_e6DState == STATE_6D_SLEEP)
+//		if(s_e6DState == STATE_6D_SLEEP)
 				s_e6DState = STATE_6D_IDLE;
 #endif
 }
@@ -157,7 +157,7 @@ static void Board_Init(void)
 #if defined(BOARD_TYPE_TX) || defined(BOARD_TYPE_6D)
 #ifdef BOARD_HAS_CMT2119A
 		twi_init();
-		while(initCnt < 5){
+		while(initCnt < 3){
 				if (CMT2119A_Init(g_cmt2119aCfg, 21)) {
 						break;
 				}else{
@@ -220,11 +220,10 @@ static uint8_t s_u8MotorStarted = 0;        // 本次接收窗口内电机是否
 
 // 6D 板发送数据缓冲区 (前导码 + 同步字 + 数据)
 static uint8_t s_6DTxData[RF_TOTAL_SIZE]={
-    0xAA, 0xAA, 0xAA, 0xAA,                             // 前导码 (4 字节)
-		0x2D, 0xD4, 0x2D, 0xD4,      				        //同步码
-    0x10,											    // 数据包长度
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,     // data: 0x6D=6D 板标识，[1]=6D 数据
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0xAA, 0xAA, 0xAA, 0xAA,               	// 前导码(4B)
+		0x2D, 0xD4, 0x2D, 0xD4,      				 		//同步码
+    0x04,											    					// 数据包长度
+    0x00, 0x00, 0x00, 0x00,     						// data: 命令(1B),配对码(2B),数据(1B)
 };
 
 static rf_data_t rf_data = {0};
@@ -262,7 +261,7 @@ static void Board_6D_Loop(void)
 //                twi_init();
                 {
                     uint8_t initCnt = 0, ret = false;
-										while(initCnt < 5){
+										while(initCnt < 3){
 												twi_init();
                         if (CMT2119A_Init(g_cmt2119aCfg, 21)){
 														ret = true;
@@ -273,7 +272,7 @@ static void Board_6D_Loop(void)
 												}
                     }
                     if (ret) {
-                        rf_data.len = 0x10;
+                        rf_data.len = (sizeof(rf_data_t)-1);
                         rf_data.cmd = UPLOAD_6D;
                         rf_data.pair_data = user_flash_readByte(PAIR_ADDR);
                         rf_data.data = u8CurData;
@@ -491,7 +490,7 @@ static void Board_RX_Loop(void)
     if (Radio_Recv_FixedLen(g_recevingBuf, g_recevlength)) {
         // 收到数据，验证数据包格式
 				rf_data_t *rf_data = (rf_data_t *)g_recevingBuf;
-				if(rf_data->len == 0x10){
+				if(rf_data->len == 0x04){
 						//6D数据
 						if((rf_data->cmd == UPLOAD_6D) && (rf_data->pair_data == user_flash_readByte(PAIR_ADDR))){
 								uint8_t u86DData = rf_data->data;  // 获取 6D 数据

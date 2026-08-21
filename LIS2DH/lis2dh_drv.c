@@ -80,9 +80,9 @@ uint8_t LIS2DH_Init(void)
   
     LIS2DH_WriteReg(LIS2DH_REG_CTRL_REG5, 0x00);        // 中断不锁存
     // LIS2DH_WriteReg(LIS2DH_REG_CTRL_REG5, 0x08);        // 中断锁存 (I1_LIR=1)，允许重复触发
-    LIS2DH_WriteReg(LIS2DH_REG_INT1_THS, 0x10);
-    LIS2DH_WriteReg(LIS2DH_REG_INT1_DURATION, 0x00);
-    LIS2DH_WriteReg(LIS2DH_REG_INT1_CFG, 0xFF); // 全方向 6D 检测
+    LIS2DH_WriteReg(LIS2DH_REG_INT1_THS, 0x15);					//调节触发阈值
+    LIS2DH_WriteReg(LIS2DH_REG_INT1_DURATION, 0x05);	//0x00 6D识别静止500ms算有效
+    LIS2DH_WriteReg(LIS2DH_REG_INT1_CFG, 0xFF); //0xff 全方向 6D 检测
 		
 		LIS2DH_ClearInterrupt();
 		return 0;

@@ -1,0 +1,18 @@
+# ---- Keil/MDK 编译中间文件（不入库，仅保留固件烧录文件）----
+MDK/output/release/*.o
+MDK/output/release/*.d
+MDK/output/release/*.crf
+MDK/output/release/*.dep
+MDK/output/release/*.map
+MDK/output/release/*.lnp
+MDK/output/release/*.sct
+MDK/output/release/*.build_log.htm
+MDK/output/release/ExtDll.iex
+
+# ---- Keil 调试日志 / 个人 IDE 布局 ----
+MDK/JLinkLog.txt
+MDK/*.uvguix.*
+
+# 说明：以下为固件烧录文件，保持入库（不忽略）
+#   MDK/output/release/*.hex
+#   MDK/output/release/*.axf

@@ -189,8 +189,8 @@ void Transimission(uint8_t pBuf[], uint8_t len)
 			rfm_twi_data_out();
 			//delay100us (1);
 			//system_delay_1us(47);
-			//system_delay_1us(110);		//4M 2.4kbps
-			system_delay_1us(47);		//4M 4.8kbps
+			system_delay_1us(110);		//4M 2.4kbps
+			//system_delay_1us(47);		//4M 4.8kbps
 
 //		delay1us(417);  //SymbolTime
 //		delay1us(425);  //SymbolTime

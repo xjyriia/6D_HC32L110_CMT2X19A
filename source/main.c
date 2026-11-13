@@ -57,6 +57,8 @@
 #include "user_low_power.h"
 #endif
 
+#define	g_cmt2119a_Cfg		g_cmt2119a_795Cfg	//g_cmt2119a_868Cfg
+
 // 接收数据缓冲区
 #define g_recevlength       0x05
 unsigned char g_recevingBuf[g_recevlength];
@@ -147,7 +149,7 @@ static void Board_Init(void)
 #endif
     
     // 看门狗初始化 (所有板型)
-    PcaWdt_Init();
+//		PcaWdt_Init();
     
     // Flash 初始化 (所有板型)
     user_flash_init();
@@ -158,7 +160,7 @@ static void Board_Init(void)
 #ifdef BOARD_HAS_CMT2119A
 		twi_init();
 		while(initCnt < 3){
-				if (CMT2119A_Init(g_cmt2119aCfg, 21)) {
+				if (CMT2119A_Init(g_cmt2119a_Cfg, 21)) {
 						break;
 				}else{
 						initCnt++;
@@ -263,7 +265,7 @@ static void Board_6D_Loop(void)
                     uint8_t initCnt = 0, ret = false;
 										while(initCnt < 3){
 												twi_init();
-                        if (CMT2119A_Init(g_cmt2119aCfg, 21)){
+                        if (CMT2119A_Init(g_cmt2119a_Cfg, 21)){
 														ret = true;
 														break;
 												}else{
@@ -430,10 +432,10 @@ static void Board_TX_Loop(void)
         // 唤醒 CMT2119A
 //        CMT2119A_Wakeup();
 				twi_init();
-				if (FALSE == CMT2119A_Init(g_cmt2119aCfg, 21)) {
+				if (FALSE == CMT2119A_Init(g_cmt2119a_Cfg, 21)) {
         uint8_t i;
         for (i = 0; i < 5; i++) {
-            if (CMT2119A_Init(g_cmt2119aCfg, 21)) break;
+            if (CMT2119A_Init(g_cmt2119a_Cfg, 21)) break;
             delay1ms(10);
         }
     }
@@ -477,13 +479,14 @@ static void Board_TX_Loop(void)
 #ifdef BOARD_HAS_CMT2219A
 extern uint8_t Radio_Recv_FixedLen(uint8_t *pBuf, uint8_t len);
 #endif
-
+uint8_t u86DData = 0;
 static void Board_RX_Loop(void)
 {
     // 防重复接收变量 (防止重发机制导致的重复振动)
     static uint32_t s_u32LastRecvTick = 0;
     static uint8_t s_u8Last6DData = 0xFF;
     uint32_t u32CurTick;
+		const uint8_t P_MAP[] = {0, 4, 1, 5, 2, 6, 3, 7};	//4点面开孔,点数映射
     
     // 检查是否收到数据 (轮询 CMT2219A 的 GPIO1/PKT_OK 引脚)
 #ifdef BOARD_HAS_CMT2219A
@@ -493,7 +496,8 @@ static void Board_RX_Loop(void)
 				if(rf_data->len == 0x04){
 						//6D数据
 						if((rf_data->cmd == UPLOAD_6D) && (rf_data->pair_data == user_flash_readByte(PAIR_ADDR))){
-								uint8_t u86DData = rf_data->data;  // 获取 6D 数据
+								//uint8_t 
+								u86DData = rf_data->data;  // 获取 6D 数据
 								u32CurTick = *lpt_flag_get();
 #ifdef BOARD_NEED_VIBRATOR
 								// 根据 6D 数据振动对应次数
@@ -503,7 +507,8 @@ static void Board_RX_Loop(void)
 										// 防重复：相同数据在 500ms 内只处理一次
 										if (u86DData != s_u8Last6DData || 
 												(u32CurTick - s_u32LastRecvTick) >= 50) {  // 50 ticks = 500ms
-												user_vibrator_set(u86DData);
+												//user_vibrator_set(u86DData);
+												user_vibrator_set( P_MAP[u86DData]);
 												s_u8Last6DData = u86DData;
 												s_u32LastRecvTick = u32CurTick;
 										}

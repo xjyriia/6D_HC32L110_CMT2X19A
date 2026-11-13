@@ -47,7 +47,7 @@ typedef struct {
 	#define BOARD_HAS_CMT2119A    // 发射功能
 //	#define BOARD_HAS_CMT2219A    // 接收功能（200ms 间隔接收模式）
 //#define BOARD_NEED_MOTOR      // 电机控制
-	#define BOARD_NEED_LOW_POWER  // 低功耗管理
+//	#define BOARD_NEED_LOW_POWER  // 低功耗管理
 #elif defined(BOARD_TYPE_TX)
 	#define BOARD_HAS_CMT2119A    // 发射功能
 	#define BOARD_NEED_LOW_POWER  // 低功耗管理

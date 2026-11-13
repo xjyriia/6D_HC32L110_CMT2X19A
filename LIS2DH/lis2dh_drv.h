@@ -59,10 +59,10 @@
 typedef enum {
     POSITION_UNKNOWN,
     POSITION_Z_DOWN,
-    POSITION_X_UP,
+    POSITION_X_DOWN,
     POSITION_Y_DOWN,
     POSITION_Y_UP,
-    POSITION_X_DOWN,
+    POSITION_X_UP,
     POSITION_Z_UP
 } SixDPosition;
 
